@@ -3,7 +3,7 @@ pragma solidity 0.8.24;
 
 /**
  * @title IRewardDistributorTypes
- * @author Yolllo
+ * @author Beeezo
  * @dev Contains common data structures used by the RewardDistributor contract, including messages
  *      for withdrawing budget and claiming rewards.
  */

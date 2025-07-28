@@ -18,7 +18,7 @@ import {IRCToken} from "./interfaces/IRCToken.sol";
 
 /**
  * @title RewardDistributor
- * @author Yolllo
+ * @author Beeezo
  * @dev Implements the distribution of reward tokens in exchange for stablecoin deposits. This contract
  *      supports features like deposits, claims, withdrawing budget, and upgrades, while ensuring security
  *      through role-based access control and signature validation using EIP-712.

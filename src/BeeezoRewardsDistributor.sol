@@ -25,6 +25,8 @@ contract BeeezoRewardsDistributor is Initializable, PausableUpgradeable, AccessC
     /// @notice Fixed rate of reward tokens distributed per unit of stablecoin (USD)
     uint256 public constant REWARD_TOKENS_PER_USD = 1000;
 
+    uint256 public constant MINIMUM_DISTRIBUTE_AMOUNT = 100;
+
     bytes32 public constant PAUSER_ROLE = keccak256("PAUSER_ROLE");
     bytes32 public constant UPGRADER_ROLE = keccak256("UPGRADER_ROLE");
     bytes32 public constant DISTRIBUTOR_ROLE = keccak256("DISTRIBUTOR_ROLE");
@@ -123,7 +125,7 @@ contract BeeezoRewardsDistributor is Initializable, PausableUpgradeable, AccessC
     }
 
     function distributeRewards(address receiver, uint256 amount, uint256 fee) external onlyRole(DISTRIBUTOR_ROLE) whenNotPaused {
-        if (amount == 0 || amount < REWARD_TOKENS_PER_USD) {
+        if (amount == 0 || amount < MINIMUM_DISTRIBUTE_AMOUNT) {
             revert InvalidAmount();
         }
         if (receiver == address(0)) {

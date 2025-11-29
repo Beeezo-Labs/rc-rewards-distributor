@@ -14,4 +14,8 @@ contract RewardCoinMock is ERC20, ERC20Burnable {
     function burnRewardTokens(uint256 amount) external {
         _burn(msg.sender, amount);
     }
+
+    function decimals() public pure override returns (uint8) {
+        return 0;
+    }
 }

@@ -37,6 +37,6 @@ contract DeployDistributor is Script {
 
         vm.stopBroadcast();
 
-        console.log("Distributor deployed to: ", address(distributor));
+        console.log("Distributor deployed to: ", address(implementation));
     }
 }

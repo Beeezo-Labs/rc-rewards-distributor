@@ -24,6 +24,7 @@ contract BeeezoRewardsDistributor is Initializable, PausableUpgradeable, AccessC
 
     /// @notice Fixed rate of reward tokens distributed per unit of stablecoin (USD)
     uint256 public constant REWARD_TOKENS_PER_USD = 1000;
+    uint256 public constant RAW_USDC_PER_REWARD_TOKEN = 1000; // 6 decimals, for 1000 RC returns 1000 * 1000 -> 1000000 -> 1 USDC
 
     uint256 public constant MINIMUM_DISTRIBUTE_AMOUNT = 100;
 
@@ -104,24 +105,18 @@ contract BeeezoRewardsDistributor is Initializable, PausableUpgradeable, AccessC
     }
 
     function swapRC(uint256 amount) external whenNotPaused {
-        if (amount == 0 || amount < REWARD_TOKENS_PER_USD) {
+        if (amount == 0) {
             revert InvalidAmount();
-        }
-
-        uint256 denom = 10 ** IERC20Metadata(_stableCoin).decimals();
-
-        if (amount % REWARD_TOKENS_PER_USD != 0) {
-            revert RoundAmountRequired();
         }
 
         IERC20(_rewardCoin).safeTransferFrom(msg.sender, address(this), amount);
         IRewardCoin(_rewardCoin).burnRewardTokens(amount);
 
-        uint256 amountUSDC = (amount * denom) / REWARD_TOKENS_PER_USD;
+        uint256 amountUSDC = (amount * RAW_USDC_PER_REWARD_TOKEN);
 
         IERC20(_stableCoin).safeTransfer(msg.sender, amountUSDC);
 
-        emit Swap(msg.sender, amount / REWARD_TOKENS_PER_USD, amount);
+        emit Swap(msg.sender, amountUSDC, amount);
     }
 
     function distributeRewards(address receiver, uint256 amount, uint256 fee) external onlyRole(DISTRIBUTOR_ROLE) whenNotPaused {

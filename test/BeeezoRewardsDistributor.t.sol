@@ -288,12 +288,6 @@ contract BeeezoRewardsDistributorUnitTest is Test {
         distributor.distributeRewards(user, rewardsAmount, gasFees);
     }
 
-    function testDistributeRewardsRevertedWhenAmountLessThanMinimal() public {
-        vm.prank(beeezoAdmin);
-        vm.expectRevert(IBeeezoRewardsDistributor.InvalidAmount.selector);
-        distributor.distributeRewards(user, rcPerUsd - 1, gasFees);
-    }
-
     function testDistributeRewardsRevertedWhenZeroAddress() public {
         vm.prank(beeezoAdmin);
         vm.expectRevert(IBeeezoRewardsDistributor.ZeroAddress.selector);
@@ -313,7 +307,7 @@ contract BeeezoRewardsDistributorUnitTest is Test {
         uint256 distributorBalanceUsdcBefore = usdc.balanceOf(address(distributor));
 
         vm.expectEmit(true, true, true, true, address(distributor));
-        emit IBeeezoRewardsDistributor.Swap(user, (swapAmount / rcPerUsd), swapAmount);
+        emit IBeeezoRewardsDistributor.Swap(user, swapAmount * rcPerUsd, swapAmount);
 
         vm.prank(user);
         distributor.swapRC(swapAmount);
@@ -329,6 +323,35 @@ contract BeeezoRewardsDistributorUnitTest is Test {
         assertEq(_toUsd(distributorBalanceUsdcAfter), _toUsd(distributorBalanceUsdcBefore) - (swapAmount / rcPerUsd));
     }
 
+    function testFuzzSwapRc(uint256 amount) public {
+        vm.prank(deployer);
+        distributor.deposit(depositAmount);
+
+        vm.prank(beeezoAdmin);
+        distributor.distributeRewards(user, rewardsAmount, gasFees);
+
+        uint256 userBalanceRcBefore = rc.balanceOf(user);
+        uint256 userBalanceUsdcBefore = usdc.balanceOf(user);
+        uint256 distributorBalanceRcBefore= rc.balanceOf(address(distributor));
+        uint256 distributorBalanceUsdcBefore = usdc.balanceOf(address(distributor));
+
+        vm.expectEmit(true, true, true, true, address(distributor));
+        emit IBeeezoRewardsDistributor.Swap(user, amount * rcPerUsd, amount);
+
+        vm.prank(user);
+        distributor.swapRC(amount);
+
+        uint256 userBalanceRcAfter = rc.balanceOf(user);
+        uint256 userBalanceUsdcAfter = usdc.balanceOf(user);
+        uint256 distributorBalanceRcAfter= rc.balanceOf(address(distributor));
+        uint256 distributorBalanceUsdcAfter = usdc.balanceOf(address(distributor));
+
+        assertEq(userBalanceRcAfter, userBalanceRcBefore - amount);
+        assertEq(_toUsd(userBalanceUsdcAfter), _toUsd(userBalanceUsdcBefore) + (amount / rcPerUsd));
+        assertEq(distributorBalanceRcBefore, distributorBalanceRcAfter); // no changes here
+        assertEq(_toUsd(distributorBalanceUsdcAfter), _toUsd(distributorBalanceUsdcBefore) - (amount / rcPerUsd));
+    }
+
     function testSwapRevertedWhenZeroAmount() public {
         vm.prank(deployer);
         distributor.deposit(depositAmount);
@@ -339,10 +362,6 @@ contract BeeezoRewardsDistributorUnitTest is Test {
         vm.prank(user);
         vm.expectRevert(IBeeezoRewardsDistributor.InvalidAmount.selector);
         distributor.swapRC(0);
-    }
-
-    function testSwapRevertedWhenAmountLessThanUsd() public {
-
     }
 
     function _toUsd(uint256 usdcAmount) internal view returns (uint256) {

@@ -16,7 +16,7 @@ contract BeeezoRewardsDistributorUnitTest is Test {
     address internal upgrader = makeAddr("upgrader");
     address internal pauser = makeAddr("pauser");
     address internal beeezoAdmin = makeAddr("beeezoAdmin");
-    address internal user = makeAddr ("user");
+    address internal user = makeAddr("user");
 
     StableCoinMock internal usdc = new StableCoinMock();
     RewardCoinMock internal rc = new RewardCoinMock();
@@ -60,7 +60,7 @@ contract BeeezoRewardsDistributorUnitTest is Test {
         rc.approve(address(distributor), type(uint256).max);
     }
 
-    function testConstructorAndInitializer() public {
+    function testConstructorAndInitializer() public view {
         assertTrue(distributor.hasRole(distributor.DEFAULT_ADMIN_ROLE(), deployer));
         assertTrue(distributor.hasRole(distributor.PAUSER_ROLE(), pauser));
         assertTrue(distributor.hasRole(distributor.UPGRADER_ROLE(), upgrader));
@@ -143,16 +143,10 @@ contract BeeezoRewardsDistributorUnitTest is Test {
         vm.prank(deployer);
         distributor.deposit(depositAmount);
 
-        uint256 investorBalanceAfter = usdc.balanceOf(deployer);
-        uint256 distributorBalanceAfter = usdc.balanceOf(address(distributor));
-        uint256 investorRcBalanceAfter = rc.balanceOf(deployer);
-        uint256 distributorRcBalanceAfter = rc.balanceOf(address(distributor));
-
-        assertEq(investorBalanceAfter, investorBalanceBefore - depositAmount);
-        assertEq(distributorBalanceAfter, distributorBalanceBefore + depositAmount);
-        assertEq(investorRcBalanceAfter, investorRcBalanceBefore); // still 0
-        assertEq(distributorRcBalanceAfter, distributorRcBalanceBefore + depositAmountRc);
-
+        assertEq(usdc.balanceOf(deployer), investorBalanceBefore - depositAmount);
+        assertEq(usdc.balanceOf(address(distributor)), distributorBalanceBefore + depositAmount);
+        assertEq(rc.balanceOf(deployer), investorRcBalanceBefore);
+        assertEq(rc.balanceOf(address(distributor)), distributorRcBalanceBefore + depositAmountRc);
         assertEq(distributor.totalDeposited(deployer), depositAmount);
     }
 
@@ -160,6 +154,15 @@ contract BeeezoRewardsDistributorUnitTest is Test {
         vm.expectRevert(IBeeezoRewardsDistributor.InvalidAmount.selector);
         vm.prank(deployer);
         distributor.deposit(minimalDeposit - 1);
+    }
+
+    function testDepositRevertedWhenNonRoundAmount() public {
+        uint256 nonRoundAmount = minimalDeposit + 1;
+        usdc.mint(deployer, nonRoundAmount);
+
+        vm.expectRevert(IBeeezoRewardsDistributor.RoundAmountRequired.selector);
+        vm.prank(deployer);
+        distributor.deposit(nonRoundAmount);
     }
 
     function testDepositRevertedWhenContractPaused() public {
@@ -186,17 +189,11 @@ contract BeeezoRewardsDistributorUnitTest is Test {
         vm.prank(deployer);
         distributor.cashback(deployer, depositAmount);
 
-        uint256 investorBalanceAfter = usdc.balanceOf(deployer);
-        uint256 distributorBalanceAfter = usdc.balanceOf(address(distributor));
-        uint256 investorRcBalanceAfter = rc.balanceOf(deployer);
-        uint256 distributorRcBalanceAfter = rc.balanceOf(address(distributor));
-
-        assertEq(investorBalanceAfter, investorBalanceBefore + depositAmount);
-        assertEq(distributorBalanceAfter, distributorBalanceBefore - depositAmount);
-        assertEq(investorRcBalanceAfter, investorRcBalanceBefore); // still 0
-        assertEq(distributorRcBalanceAfter, distributorRcBalanceBefore - depositAmountRc);
-
-        assertEq(distributor.totalDeposited(deployer), depositAmount); // do not change
+        assertEq(usdc.balanceOf(deployer), investorBalanceBefore + depositAmount);
+        assertEq(usdc.balanceOf(address(distributor)), distributorBalanceBefore - depositAmount);
+        assertEq(rc.balanceOf(deployer), investorRcBalanceBefore);
+        assertEq(rc.balanceOf(address(distributor)), distributorRcBalanceBefore - depositAmountRc);
+        assertEq(distributor.totalDeposited(deployer), depositAmount);
         assertEq(distributor.totalWithdrawn(deployer), depositAmount);
     }
 
@@ -204,12 +201,23 @@ contract BeeezoRewardsDistributorUnitTest is Test {
         vm.prank(deployer);
         distributor.deposit(depositAmount);
 
+        uint256 tooMuch = depositAmount + 10 ** usdc.decimals();
+
         vm.expectRevert(IBeeezoRewardsDistributor.InvalidAmount.selector);
         vm.prank(deployer);
-        distributor.cashback(deployer, depositAmount + 1);
+        distributor.cashback(deployer, tooMuch);
     }
 
     function testCashbackRevertedWhenZeroAmount() public {
+        vm.prank(deployer);
+        distributor.deposit(depositAmount);
+
+        vm.expectRevert(IBeeezoRewardsDistributor.InvalidAmount.selector);
+        vm.prank(deployer);
+        distributor.cashback(deployer, 0);
+    }
+
+    function testCashbackRevertedWhenZeroAddress() public {
         vm.prank(deployer);
         distributor.deposit(depositAmount);
 
@@ -256,14 +264,19 @@ contract BeeezoRewardsDistributorUnitTest is Test {
         vm.prank(beeezoAdmin);
         distributor.distributeRewards(user, rewardsAmount, gasFees);
 
-        uint256 userBalanceAfter = rc.balanceOf(user);
-        uint256 distributorBalanceAfter = rc.balanceOf(address(distributor));
-        uint256 treasuryBalanceAfter = rc.balanceOf(deployer);
-
-        assertEq(userBalanceAfter, userBalanceBefore + (rewardsAmount - gasFees));
-        assertEq(distributorBalanceAfter, distributorBalanceBefore - rewardsAmount);
-        assertEq(treasuryBalanceAfter, treasuryBalanceBefore + gasFees);
+        assertEq(rc.balanceOf(user), userBalanceBefore + (rewardsAmount - gasFees));
+        assertEq(rc.balanceOf(address(distributor)), distributorBalanceBefore - rewardsAmount);
+        assertEq(rc.balanceOf(deployer), treasuryBalanceBefore + gasFees);
         assertEq(distributor.totalEarned(user), rewardsAmount);
+    }
+
+    function testDistributeRewardsRevertedWhenFeeExceedsAmount() public {
+        vm.prank(deployer);
+        distributor.deposit(depositAmount);
+
+        vm.expectRevert(IBeeezoRewardsDistributor.InvalidAmount.selector);
+        vm.prank(beeezoAdmin);
+        distributor.distributeRewards(user, rewardsAmount, rewardsAmount + 1);
     }
 
     function testDistributeRewardsRevertedWhenCallerNotAdmin() public {
@@ -274,7 +287,6 @@ contract BeeezoRewardsDistributorUnitTest is Test {
                 distributor.DISTRIBUTOR_ROLE()
             )
         );
-
         vm.prank(user);
         distributor.distributeRewards(user, rewardsAmount, gasFees);
     }
@@ -289,9 +301,140 @@ contract BeeezoRewardsDistributorUnitTest is Test {
     }
 
     function testDistributeRewardsRevertedWhenZeroAddress() public {
-        vm.prank(beeezoAdmin);
         vm.expectRevert(IBeeezoRewardsDistributor.ZeroAddress.selector);
+        vm.prank(beeezoAdmin);
         distributor.distributeRewards(address(0), rewardsAmount, gasFees);
+    }
+
+    function testDistributeRewardsRevertedWhenAmountBelowMinimum() public {
+        vm.prank(deployer);
+        distributor.deposit(depositAmount);
+
+        uint256 belowMinimum = distributor.MINIMUM_DISTRIBUTE_AMOUNT() - 1;
+
+        vm.expectRevert(IBeeezoRewardsDistributor.InvalidAmount.selector);
+        vm.prank(beeezoAdmin);
+        distributor.distributeRewards(user, belowMinimum, 0);
+    }
+
+    function testSetStableCoin() public {
+        address newStableCoin = makeAddr("newStableCoin");
+
+        vm.expectEmit(true, false, false, false, address(distributor));
+        emit IBeeezoRewardsDistributor.StableCoinSet(newStableCoin);
+
+        vm.prank(deployer);
+        distributor.setStableCoin(newStableCoin);
+
+        assertEq(distributor.stableCoin(), newStableCoin);
+    }
+
+    function testSetStableCoinRevertedWhenZeroAddress() public {
+        vm.expectRevert(IBeeezoRewardsDistributor.ZeroAddress.selector);
+        vm.prank(deployer);
+        distributor.setStableCoin(address(0));
+    }
+
+    function testSetStableCoinRevertedWhenCallerNotAdmin() public {
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IAccessControl.AccessControlUnauthorizedAccount.selector,
+                user,
+                distributor.DEFAULT_ADMIN_ROLE()
+            )
+        );
+        vm.prank(user);
+        distributor.setStableCoin(makeAddr("newStableCoin"));
+    }
+
+    function testSetRewardCoin() public {
+        address newRewardCoin = makeAddr("newRewardCoin");
+
+        vm.expectEmit(true, false, false, false, address(distributor));
+        emit IBeeezoRewardsDistributor.RewardCoinSet(newRewardCoin);
+
+        vm.prank(deployer);
+        distributor.setRewardCoin(newRewardCoin);
+
+        assertEq(distributor.rewardCoin(), newRewardCoin);
+    }
+
+    function testSetRewardCoinRevertedWhenZeroAddress() public {
+        vm.expectRevert(IBeeezoRewardsDistributor.ZeroAddress.selector);
+        vm.prank(deployer);
+        distributor.setRewardCoin(address(0));
+    }
+
+    function testSetRewardCoinRevertedWhenCallerNotAdmin() public {
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IAccessControl.AccessControlUnauthorizedAccount.selector,
+                user,
+                distributor.DEFAULT_ADMIN_ROLE()
+            )
+        );
+        vm.prank(user);
+        distributor.setRewardCoin(makeAddr("newRewardCoin"));
+    }
+
+    function testSetMinimalDeposit() public {
+        uint256 newMinimalDeposit = minimalDeposit * 2;
+
+        vm.expectEmit(false, false, false, true, address(distributor));
+        emit IBeeezoRewardsDistributor.MinimalDepositSet(newMinimalDeposit);
+
+        vm.prank(deployer);
+        distributor.setMinimalDeposit(newMinimalDeposit);
+
+        assertEq(distributor.minimalDeposit(), newMinimalDeposit);
+    }
+
+    function testSetMinimalDepositRevertedWhenCallerNotAdmin() public {
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IAccessControl.AccessControlUnauthorizedAccount.selector,
+                user,
+                distributor.DEFAULT_ADMIN_ROLE()
+            )
+        );
+        vm.prank(user);
+        distributor.setMinimalDeposit(minimalDeposit * 2);
+    }
+
+    function testSetTreasury() public {
+        address newTreasury = makeAddr("newTreasury");
+
+        vm.expectEmit(true, false, false, false, address(distributor));
+        emit IBeeezoRewardsDistributor.TreasurySet(newTreasury);
+
+        vm.prank(deployer);
+        distributor.setTreasury(newTreasury);
+
+        vm.prank(deployer);
+        distributor.deposit(depositAmount);
+
+        uint256 newTreasuryRcBefore = rc.balanceOf(newTreasury);
+        vm.prank(beeezoAdmin);
+        distributor.distributeRewards(user, rewardsAmount, gasFees);
+        assertEq(rc.balanceOf(newTreasury), newTreasuryRcBefore + gasFees);
+    }
+
+    function testSetTreasuryRevertedWhenZeroAddress() public {
+        vm.expectRevert(IBeeezoRewardsDistributor.ZeroAddress.selector);
+        vm.prank(deployer);
+        distributor.setTreasury(address(0));
+    }
+
+    function testSetTreasuryRevertedWhenCallerNotAdmin() public {
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IAccessControl.AccessControlUnauthorizedAccount.selector,
+                user,
+                distributor.DEFAULT_ADMIN_ROLE()
+            )
+        );
+        vm.prank(user);
+        distributor.setTreasury(makeAddr("newTreasury"));
     }
 
     function testSwapRc() public {
@@ -303,24 +446,20 @@ contract BeeezoRewardsDistributorUnitTest is Test {
 
         uint256 userBalanceRcBefore = rc.balanceOf(user);
         uint256 userBalanceUsdcBefore = usdc.balanceOf(user);
-        uint256 distributorBalanceRcBefore= rc.balanceOf(address(distributor));
+        uint256 distributorBalanceRcBefore = rc.balanceOf(address(distributor));
         uint256 distributorBalanceUsdcBefore = usdc.balanceOf(address(distributor));
 
         vm.expectEmit(true, true, true, true, address(distributor));
-        emit IBeeezoRewardsDistributor.Swap(user, swapAmount * rcPerUsd, swapAmount);
+        emit IBeeezoRewardsDistributor.Swap(user, swapAmount * distributor.RAW_USDC_PER_REWARD_TOKEN(), swapAmount);
 
         vm.prank(user);
         distributor.swapRC(swapAmount);
 
-        uint256 userBalanceRcAfter = rc.balanceOf(user);
-        uint256 userBalanceUsdcAfter = usdc.balanceOf(user);
-        uint256 distributorBalanceRcAfter= rc.balanceOf(address(distributor));
-        uint256 distributorBalanceUsdcAfter = usdc.balanceOf(address(distributor));
-
-        assertEq(userBalanceRcAfter, userBalanceRcBefore - swapAmount);
-        assertEq(_toUsd(userBalanceUsdcAfter), _toUsd(userBalanceUsdcBefore) + (swapAmount / rcPerUsd));
-        assertEq(distributorBalanceRcBefore, distributorBalanceRcAfter); // no changes here
-        assertEq(_toUsd(distributorBalanceUsdcAfter), _toUsd(distributorBalanceUsdcBefore) - (swapAmount / rcPerUsd));
+        uint256 expectedUsdc = swapAmount * distributor.RAW_USDC_PER_REWARD_TOKEN();
+        assertEq(rc.balanceOf(user), userBalanceRcBefore - swapAmount);
+        assertEq(usdc.balanceOf(user), userBalanceUsdcBefore + expectedUsdc);
+        assertEq(rc.balanceOf(address(distributor)), distributorBalanceRcBefore);
+        assertEq(usdc.balanceOf(address(distributor)), distributorBalanceUsdcBefore - expectedUsdc);
     }
 
     function testFuzzSwapRc(uint256 amount) public {
@@ -330,26 +469,26 @@ contract BeeezoRewardsDistributorUnitTest is Test {
         vm.prank(beeezoAdmin);
         distributor.distributeRewards(user, rewardsAmount, gasFees);
 
+        uint256 maxByUserRc = rc.balanceOf(user);
+        uint256 maxByDistributorUsdc = usdc.balanceOf(address(distributor)) / distributor.RAW_USDC_PER_REWARD_TOKEN();
+        amount = bound(amount, 1, min(maxByUserRc, maxByDistributorUsdc));
+
         uint256 userBalanceRcBefore = rc.balanceOf(user);
         uint256 userBalanceUsdcBefore = usdc.balanceOf(user);
-        uint256 distributorBalanceRcBefore= rc.balanceOf(address(distributor));
+        uint256 distributorBalanceRcBefore = rc.balanceOf(address(distributor));
         uint256 distributorBalanceUsdcBefore = usdc.balanceOf(address(distributor));
 
         vm.expectEmit(true, true, true, true, address(distributor));
-        emit IBeeezoRewardsDistributor.Swap(user, amount * rcPerUsd, amount);
+        emit IBeeezoRewardsDistributor.Swap(user, amount * distributor.RAW_USDC_PER_REWARD_TOKEN(), amount);
 
         vm.prank(user);
         distributor.swapRC(amount);
 
-        uint256 userBalanceRcAfter = rc.balanceOf(user);
-        uint256 userBalanceUsdcAfter = usdc.balanceOf(user);
-        uint256 distributorBalanceRcAfter= rc.balanceOf(address(distributor));
-        uint256 distributorBalanceUsdcAfter = usdc.balanceOf(address(distributor));
-
-        assertEq(userBalanceRcAfter, userBalanceRcBefore - amount);
-        assertEq(_toUsd(userBalanceUsdcAfter), _toUsd(userBalanceUsdcBefore) + (amount / rcPerUsd));
-        assertEq(distributorBalanceRcBefore, distributorBalanceRcAfter); // no changes here
-        assertEq(_toUsd(distributorBalanceUsdcAfter), _toUsd(distributorBalanceUsdcBefore) - (amount / rcPerUsd));
+        uint256 expectedUsdc = amount * distributor.RAW_USDC_PER_REWARD_TOKEN();
+        assertEq(rc.balanceOf(user), userBalanceRcBefore - amount);
+        assertEq(usdc.balanceOf(user), userBalanceUsdcBefore + expectedUsdc);
+        assertEq(rc.balanceOf(address(distributor)), distributorBalanceRcBefore);
+        assertEq(usdc.balanceOf(address(distributor)), distributorBalanceUsdcBefore - expectedUsdc);
     }
 
     function testSwapRevertedWhenZeroAmount() public {
@@ -359,12 +498,73 @@ contract BeeezoRewardsDistributorUnitTest is Test {
         vm.prank(beeezoAdmin);
         distributor.distributeRewards(user, rewardsAmount, gasFees);
 
-        vm.prank(user);
         vm.expectRevert(IBeeezoRewardsDistributor.InvalidAmount.selector);
+        vm.prank(user);
         distributor.swapRC(0);
     }
 
-    function _toUsd(uint256 usdcAmount) internal view returns (uint256) {
-        return usdcAmount / 10 ** usdc.decimals();
+    function testSwapRevertedWhenContractPaused() public {
+        vm.prank(deployer);
+        distributor.deposit(depositAmount);
+
+        vm.prank(beeezoAdmin);
+        distributor.distributeRewards(user, rewardsAmount, gasFees);
+
+        vm.prank(pauser);
+        distributor.pause();
+
+        vm.expectRevert(PausableUpgradeable.EnforcedPause.selector);
+        vm.prank(user);
+        distributor.swapRC(swapAmount);
+    }
+
+    function testUpgrade() public {
+        vm.prank(deployer);
+        distributor.deposit(depositAmount);
+
+        vm.prank(beeezoAdmin);
+        distributor.distributeRewards(user, rewardsAmount, gasFees);
+
+        uint256 totalDepositedBefore = distributor.totalDeposited(deployer);
+        uint256 totalEarnedBefore = distributor.totalEarned(user);
+        address stableCoinBefore = distributor.stableCoin();
+        address rewardCoinBefore = distributor.rewardCoin();
+        uint256 minimalDepositBefore = distributor.minimalDeposit();
+
+        BeeezoRewardsDistributor newImplementation = new BeeezoRewardsDistributor();
+
+        vm.prank(upgrader);
+        distributor.upgradeToAndCall(address(newImplementation), "");
+
+        assertEq(distributor.totalDeposited(deployer), totalDepositedBefore);
+        assertEq(distributor.totalEarned(user), totalEarnedBefore);
+        assertEq(distributor.stableCoin(), stableCoinBefore);
+        assertEq(distributor.rewardCoin(), rewardCoinBefore);
+        assertEq(distributor.minimalDeposit(), minimalDepositBefore);
+
+        usdc.mint(deployer, depositAmount);
+        vm.prank(deployer);
+        usdc.approve(address(distributor), type(uint256).max);
+        vm.prank(deployer);
+        distributor.deposit(depositAmount);
+        assertEq(distributor.totalDeposited(deployer), totalDepositedBefore + depositAmount);
+    }
+
+    function testUpgradeRevertedWhenCallerNotUpgrader() public {
+        BeeezoRewardsDistributor newImplementation = new BeeezoRewardsDistributor();
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IAccessControl.AccessControlUnauthorizedAccount.selector,
+                deployer,
+                distributor.UPGRADER_ROLE()
+            )
+        );
+        vm.prank(deployer);
+        distributor.upgradeToAndCall(address(newImplementation), "");
+    }
+
+    function min(uint256 a, uint256 b) internal pure returns (uint256) {
+        return a < b ? a : b;
     }
 }

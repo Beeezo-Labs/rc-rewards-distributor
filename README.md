@@ -1,66 +1,123 @@
-## Foundry
+# BeeezoRewardsDistributor
 
-**Foundry is a blazing fast, portable and modular toolkit for Ethereum application development written in Rust.**
+UUPS-upgradeable reward distribution contract. Users deposit stablecoins (USDC) and receive RC reward tokens. An off-chain distributor service pushes earned rewards to user wallets, and users can swap RC back to USDC at a fixed rate.
 
-Foundry consists of:
+## How it works
 
-- **Forge**: Ethereum testing framework (like Truffle, Hardhat and DappTools).
-- **Cast**: Swiss army knife for interacting with EVM smart contracts, sending transactions and getting chain data.
-- **Anvil**: Local Ethereum node, akin to Ganache, Hardhat Network.
-- **Chisel**: Fast, utilitarian, and verbose solidity REPL.
-
-## Documentation
-
-https://book.getfoundry.sh/
-
-## Usage
-
-### Build
-
-```shell
-$ forge build
+```
+User                    Contract                 RC Token
+ |                          |                       |
+ |-- deposit(amount) ------>|                       |
+ |   (USDC transferred in)  |-- mint(amountRC) ---->|
+ |                          |   (RC held by contract)
+ |                          |                       |
+ |<-- distributeRewards() --|   (off-chain trigger) |
+ |   (RC transferred out)   |                       |
+ |                          |                       |
+ |-- swapRC(amount) ------->|                       |
+ |   (RC transferred in)    |-- burn(amount) ------>|
+ |<-- (USDC transferred out)|                       |
 ```
 
-### Test
+**Exchange rates:**
+- Deposit: 1 USDC → 1,000 RC
+- Swap: 1,000 RC → 1 USDC
 
-```shell
-$ forge test
+## Contracts
+
+```
+src/
+├── BeeezoRewardsDistributor.sol   — main proxy-compatible contract
+├── RewardDistributorStorage.sol   — isolated storage layout (UUPS safe)
+├── interfaces/
+│   ├── IBeeezoRewardsDistributor.sol
+│   └── IRewardCoin.sol
+└── mock/
+    ├── RewardCoinMock.sol          — 0-decimal RC token for local testing
+    └── StableCoinMock.sol          — 6-decimal USDC mock for local testing
 ```
 
-### Format
+### Roles
 
-```shell
-$ forge fmt
+| Role | Capability |
+|---|---|
+| `DEFAULT_ADMIN_ROLE` | Configuration, cashback, role management |
+| `PAUSER_ROLE` | Emergency pause / unpause |
+| `UPGRADER_ROLE` | Authorise UUPS implementation upgrades |
+| `DISTRIBUTOR_ROLE` | Push earned RC rewards to user addresses |
+
+## Setup
+
+**Prerequisites:** [Foundry](https://book.getfoundry.sh/getting-started/installation)
+
+```bash
+git clone <repo>
+cd rc-rewards-distributor
+forge install
 ```
 
-### Gas Snapshots
+Copy and fill in the environment file:
 
-```shell
-$ forge snapshot
+```bash
+cp .env.example .env
 ```
 
-### Anvil
+## Build & Test
 
-```shell
-$ anvil
+```bash
+forge build
+forge test
+forge fmt          # format
+forge snapshot     # gas snapshots
 ```
 
-### Deploy
+## Deploy
 
-```shell
-$ forge script script/Counter.s.sol:CounterScript --rpc-url <your_rpc_url> --private-key <your_private_key>
+Set the required variables in `.env` (see `.env.example`):
+
+| Variable | Description |
+|---|---|
+| `PRIVATE_KEY` | Deployer private key (must be funded) |
+| `DEFAULT_ADMIN_ADDRESS` | Granted `DEFAULT_ADMIN_ROLE`, used as initial treasury |
+| `PAUSER_ADDRESS` | Granted `PAUSER_ROLE` |
+| `UPGRADER_ADDRESS` | Granted `UPGRADER_ROLE` |
+| `DISTRIBUTOR_ADDRESS` | Granted `DISTRIBUTOR_ROLE` |
+| `STABLE_COIN_ADDRESS` | Accepted stablecoin address (e.g. USDC) |
+| `REWARD_COIN_ADDRESS` | RC reward token address |
+| `MINIMAL_DEPOSIT` | Minimum deposit in raw stablecoin units (e.g. `1000000` = 1 USDC) |
+
+```bash
+forge script script/DeployDistributor.s.sol \
+  --rpc-url $RPC_URL \
+  --broadcast \
+  --verify
 ```
 
-### Cast
+The script deploys the implementation and proxy in a single transaction batch, then logs both addresses.
 
-```shell
-$ cast <subcommand>
+## Upgrade
+
+Set the additional variable in `.env`:
+
+| Variable | Description |
+|---|---|
+| `PROXY_ADDRESS` | Address of the existing `BeeezoRewardsDistributor` proxy |
+
+The signer identified by `PRIVATE_KEY` must hold `UPGRADER_ROLE` on the proxy.
+
+```bash
+forge script script/UpgradeDistributor.s.sol \
+  --rpc-url $RPC_URL \
+  --broadcast \
+  --verify
 ```
 
-### Help
+The script deploys a new implementation and calls `upgradeToAndCall` on the proxy.
 
-```shell
-$ forge --help
-$ anvil --help
-$ cast --help
+## Local dev with Anvil
+
+```bash
+anvil
 ```
+
+Use the default Anvil mnemonic (`test test test ... junk`) and deploy the mocks alongside the distributor by pointing `STABLE_COIN_ADDRESS` / `REWARD_COIN_ADDRESS` at freshly-deployed `StableCoinMock` / `RewardCoinMock` instances, or wire the deploy script to deploy mocks as part of the run.

@@ -1,83 +1,123 @@
-# Beeezo RewardDistributor Smart Contract
+# BeeezoRewardsDistributor
 
-The RewardDistributor is a smart contract project developed using Hardhat for managing the distribution of reward tokens in exchange for stablecoin deposits. It is designed for secure, upgradeable, and controlled token reward management, leveraging OpenZeppelin's battle-tested libraries.
+UUPS-upgradeable reward distribution contract. Users deposit stablecoins (USDC) and receive RC reward tokens. An off-chain distributor service pushes earned rewards to user wallets, and users can swap RC back to USDC at a fixed rate.
 
-## Project Overview
+## How it works
 
-The core contract, `RewardDistributor.sol`, provides the following functionality:
-- Deposits stablecoins (e.g., USDC) to mint reward tokens at a fixed rate (1000 reward tokens per USD).
-- Supports off-chain signed reward claims using EIP-712 for secure and gas-efficient operations.
-- Enables swapping reward tokens back for stablecoins.
-- Allows admin-controlled budget withdrawals with signature verification.
-- Provides administrative functions to update the admin address and minimum deposit amount.
-- Incorporates security features such as pausability, role-based access control, and signature validation.
-
-The contract is upgradeable via the UUPS proxy pattern and uses OpenZeppelin libraries for access control, pausability, and EIP-712 signature handling.
-
-## Prerequisites
-
-- Node.js (version 18 or later)
-- Yarn or npm
-- Hardhat (for development, testing, and deployment)
-
-## Installation
-
-1. Clone the repository:
-   ```
-   git clone <repository-url>
-   cd reward-distributor
-   ```
-
-2. Install dependencies:
-   ```
-   npm install
-   ```
-   Alternatively, use `yarn install`.
-
-3. Configure a `.env` file for deployment (optional for local testing, required for testnet/mainnet deployments with private keys).
-
-## Usage
-
-### Compiling Contracts
-
-Compile the smart contracts using:
 ```
-npx hardhat compile
+User                    Contract                 RC Token
+ |                          |                       |
+ |-- deposit(amount) ------>|                       |
+ |   (USDC transferred in)  |-- mint(amountRC) ---->|
+ |                          |   (RC held by contract)
+ |                          |                       |
+ |<-- distributeRewards() --|   (off-chain trigger) |
+ |   (RC transferred out)   |                       |
+ |                          |                       |
+ |-- swapRC(amount) ------->|                       |
+ |   (RC transferred in)    |-- burn(amount) ------>|
+ |<-- (USDC transferred out)|                       |
 ```
 
-### Running Tests
+**Exchange rates:**
+- Deposit: 1 USDC → 1,000 RC
+- Swap: 1,000 RC → 1 USDC
 
-Comprehensive tests are provided in `test/RewardDistributor.ts`, covering contract initialization, role management, deposits, claims, swaps, withdrawals, and edge cases such as pausing and invalid signatures.
+## Contracts
 
-Run the tests with:
 ```
-npx hardhat test
+src/
+├── BeeezoRewardsDistributor.sol   — main proxy-compatible contract
+├── RewardDistributorStorage.sol   — isolated storage layout (UUPS safe)
+├── interfaces/
+│   ├── IBeeezoRewardsDistributor.sol
+│   └── IRewardCoin.sol
+└── mock/
+    ├── RewardCoinMock.sol          — 0-decimal RC token for local testing
+    └── StableCoinMock.sol          — 6-decimal USDC mock for local testing
 ```
 
-## Key Features
+### Roles
 
-- **Deposits**: Users deposit stablecoins above a minimum threshold to mint reward tokens.
-- **Claims**: Reward tokens are claimed via admin-signed EIP-712 messages, ensuring secure off-chain authorization.
-- **Swaps**: Users can burn reward tokens to receive stablecoins.
-- **Budget Withdrawals**: Admins can withdraw stablecoins with signed messages, burning corresponding reward tokens.
-- **Admin Controls**: Functions to update the admin address and minimum deposit amount, restricted to authorized roles.
-- **Security**: Role-based access control (admin, pauser, upgrader), pausability, and signature validation to prevent reuse or invalid operations.
+| Role | Capability |
+|---|---|
+| `DEFAULT_ADMIN_ROLE` | Configuration, cashback, role management |
+| `PAUSER_ROLE` | Emergency pause / unpause |
+| `UPGRADER_ROLE` | Authorise UUPS implementation upgrades |
+| `DISTRIBUTOR_ROLE` | Push earned RC rewards to user addresses |
 
-## Mock Contracts
+## Setup
 
-The project includes mock contracts (`RewardCoinMock` and `StableCoinMock`) for simulating ERC20 tokens during testing.
+**Prerequisites:** [Foundry](https://book.getfoundry.sh/getting-started/installation)
 
-## Project Structure
+```bash
+git clone <repo>
+cd rc-rewards-distributor
+forge install
+```
 
-- `contracts/RewardDistributor.sol`: Main contract implementing the reward distribution logic.
-- `test/RewardDistributor.ts`: Hardhat test suite with full coverage of contract functionality.
-- `contracts/interfaces/`: Interface definitions for the reward distributor and token contracts.
-- `contracts/RewardDistributorStorage.sol`: Storage layout for the upgradeable contract.
+Copy and fill in the environment file:
 
-## Contributing
+```bash
+cp .env.example .env
+```
 
-Contributions are welcome. Please fork the repository, make changes, and submit a pull request with clear descriptions and accompanying tests.
+## Build & Test
 
-## License
+```bash
+forge build
+forge test
+forge fmt          # format
+forge snapshot     # gas snapshots
+```
 
-This project is licensed under the MIT License. See the `LICENSE` file for details.
+## Deploy
+
+Set the required variables in `.env` (see `.env.example`):
+
+| Variable | Description |
+|---|---|
+| `PRIVATE_KEY` | Deployer private key (must be funded) |
+| `DEFAULT_ADMIN_ADDRESS` | Granted `DEFAULT_ADMIN_ROLE`, used as initial treasury |
+| `PAUSER_ADDRESS` | Granted `PAUSER_ROLE` |
+| `UPGRADER_ADDRESS` | Granted `UPGRADER_ROLE` |
+| `DISTRIBUTOR_ADDRESS` | Granted `DISTRIBUTOR_ROLE` |
+| `STABLE_COIN_ADDRESS` | Accepted stablecoin address (e.g. USDC) |
+| `REWARD_COIN_ADDRESS` | RC reward token address |
+| `MINIMAL_DEPOSIT` | Minimum deposit in raw stablecoin units (e.g. `1000000` = 1 USDC) |
+
+```bash
+forge script script/DeployDistributor.s.sol \
+  --rpc-url $RPC_URL \
+  --broadcast \
+  --verify
+```
+
+The script deploys the implementation and proxy in a single transaction batch, then logs both addresses.
+
+## Upgrade
+
+Set the additional variable in `.env`:
+
+| Variable | Description |
+|---|---|
+| `PROXY_ADDRESS` | Address of the existing `BeeezoRewardsDistributor` proxy |
+
+The signer identified by `PRIVATE_KEY` must hold `UPGRADER_ROLE` on the proxy.
+
+```bash
+forge script script/UpgradeDistributor.s.sol \
+  --rpc-url $RPC_URL \
+  --broadcast \
+  --verify
+```
+
+The script deploys a new implementation and calls `upgradeToAndCall` on the proxy.
+
+## Local dev with Anvil
+
+```bash
+anvil
+```
+
+Use the default Anvil mnemonic (`test test test ... junk`) and deploy the mocks alongside the distributor by pointing `STABLE_COIN_ADDRESS` / `REWARD_COIN_ADDRESS` at freshly-deployed `StableCoinMock` / `RewardCoinMock` instances, or wire the deploy script to deploy mocks as part of the run.
